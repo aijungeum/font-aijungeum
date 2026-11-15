@@ -1,0 +1,1 @@
+print(*[chr(c) for c in (0xf0003,0xf0004)])

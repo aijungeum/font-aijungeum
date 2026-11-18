@@ -70,8 +70,6 @@ def encode_aijungeum(text: str, add_space: bool = False, hex_mode: bool = False)
     return separator.join(encoded_chars)
 
 
-PUA_START = 0xF0000
-
 def decode_aijungeum(encoded_text: str, hex_mode: bool = False) -> str:
     clean_text = "".join(encoded_text.split())
     if not clean_text:

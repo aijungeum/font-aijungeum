@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-desc: text <-> AiJungEum (PUA)
+desc: Linear 16-bit Binary Codec & Pack <-> AiJungEum (PUA Display Only)
 
 ex:
     $ python3 trans_aijungeum.py "안녕하세요 hello"
@@ -8,21 +8,30 @@ ex:
     $ python3 trans_aijungeum.py hex ffff
     $ python3 trans_aijungeum.py dehex <PUA>
     $ python3 trans_aijungeum.py pack helloworld123
-    $ python3 trans_aijungeum.py unpack <PUA> 
+    $ python3 trans_aijungeum.py unpack <PUA>
     $ python3 trans_aijungeum.py raw <PUA>
 """
 
 __author__ = "aijungeum <aijungeum.com> <aijungeum@gmail.com>"
-__version__ = "0.1.2.alpha"
+__version__ = "0.1.3.alpha"
 __date__ = "2026-11-19"
 __license__ = "MIT"
 
 import sys
 import zlib
 
-# 표현 유니코드 영역 정의
-# PUA-A: U+F0000 ~ U+FFEFF (선형 주소 0x0000 ~ 0xFEFF)
-# PUA-B: U+100000 ~ U+1000FF (선형 주소 0xFF00 ~ 0xFFFF)
+# =====================================================================
+# 상수 및 헤더 정의
+# =====================================================================
+# AiJungEum 바이너리 식별 매직 헤더 (4바이트 = 선형 2글자 분량)
+# 'AJE' (3바이트) + Flags/Version (1바이트)
+MAGIC_PREFIX = b"AJE"
+FLAG_RAW_UTF8 = 0x01  # 일반 UTF-8 선형 패킹
+FLAG_ZLIB     = 0x02  # zlib 압축 선형 패킹
+FLAG_HEX      = 0x03  # 16진수 선형 패킹
+PAD_BIT_MASK  = 0x80  # 최상위 비트(MSB): 홀수 바이트 0x00 패딩 여부 표시
+
+# 표현 유니코드 영역 정의 (Display Layer 전용)
 PUA_A_START = 0xF0000
 PUA_A_LIMIT = 0xFFEFF
 PUA_B_START = 0x100000
@@ -31,18 +40,94 @@ JUMP_THRESHOLD = 0xFF00
 
 
 # =====================================================================
-# [Layer 1] 선형 16비트 바이너리(0x0000~0xFFFF) <-> PUA 표현
+# [Layer 1] Core Linear Binary Codec & Pack (용량 최적화: 2바이트 단위)
+# =====================================================================
+
+def _align_even_bytes(data: bytes) -> tuple[bytes, bool]:
+    """선형 16비트 주소(2바이트) 정렬을 위해 홀수 길이면 끝에 0x00 1바이트 패딩"""
+    if len(data) % 2 != 0:
+        return data + b"\x00", True
+    return data, False
+
+
+def pack_linear(payload: bytes, compress: bool = False, is_hex: bool = False) -> bytes:
+    """
+    [코어 패커] 데이터를 선형 16비트(2바이트) 정렬된 바이너리 컨테이너로 패킹.
+    구조: [MAGIC(3B: 'AJE')] + [FLAGS(1B)] + [ALIGNED_PAYLOAD(2N Bytes)]
+    """
+    if is_hex:
+        mode_flag = FLAG_HEX
+    elif compress:
+        payload = zlib.compress(payload, level=9)
+        mode_flag = FLAG_ZLIB
+    else:
+        mode_flag = FLAG_RAW_UTF8
+
+    aligned_payload, is_padded = _align_even_bytes(payload)
+    if is_padded:
+        mode_flag |= PAD_BIT_MASK
+
+    header = MAGIC_PREFIX + bytes([mode_flag])  # 정확히 4바이트 (선형 2워드)
+    return header + aligned_payload
+
+
+def unpack_linear(container: bytes) -> tuple[bytes, int]:
+    """
+    [코어 언패커] 'AJE' 매직 헤더를 검증하고 원본 바이트와 모드 플래그를 복원.
+    """
+    if len(container) < 4 or not container.startswith(MAGIC_PREFIX):
+        raise ValueError("유효한 AiJungEum(AJE) 선형 바이너리 헤더가 아닙니다.")
+
+    raw_flag = container[3]
+    is_padded = bool(raw_flag & PAD_BIT_MASK)
+    mode_flag = raw_flag & ~PAD_BIT_MASK
+
+    payload = container[4:]
+    if is_padded and payload.endswith(b"\x00"):
+        payload = payload[:-1]
+
+    if mode_flag == FLAG_ZLIB:
+        payload = zlib.decompress(payload)
+
+    return payload, mode_flag
+
+
+def encode_linear_text(text: str, compress: bool = False) -> bytes:
+    """텍스트 -> 선형 바이너리 컨테이너 (PUA 미사용, 최소 용량)"""
+    return pack_linear(text.encode("utf-8"), compress=compress, is_hex=False)
+
+
+def decode_linear_text(container: bytes) -> str:
+    """선형 바이너리 컨테이너 -> 원본 텍스트 복원"""
+    payload, mode_flag = unpack_linear(container)
+    if mode_flag == FLAG_HEX:
+        return payload.hex().upper()
+    return payload.decode("utf-8", errors="replace")
+
+
+def encode_linear_hex(hex_str: str) -> bytes:
+    """16진수 문자열 -> 선형 바이너리 컨테이너"""
+    clean_hex = "".join(hex_str.split())
+    if not clean_hex:
+        return b""
+    if len(clean_hex) % 2 != 0:
+        raise ValueError("16진수 입력은 바이트 단위(짝수 길이)여야 합니다.")
+    return pack_linear(bytes.fromhex(clean_hex), compress=False, is_hex=True)
+
+
+# =====================================================================
+# [Layer 2] Display Adapter (출력 시에만 PUA 변환 / 입력 시 PUA 파싱)
 # =====================================================================
 
 def offset_to_pua(offset: int) -> str:
-    """16비트 선형 주소(0x0000~0xFFFF)를 표현용. PUA-A/B 문자로 변환"""
+    """16비트 선형 주소(0x0000~0xFFFF) -> PUA-A/B 문자"""
     if offset < JUMP_THRESHOLD:
         return chr(PUA_A_START + offset)
     return chr(PUA_B_START + (offset & 0xFF))
 
 
 def pua_to_offset(cp: int) -> int:
-    """표현용 PUA-A/B 코드포인트를 원래의 선형 16비트 주소(0x0000~0xFFFF)로 복원"""
+    """PUA-A/B 코드포인트 -> 16비트 선형 주소(0x0000~0xFFFF)"""
     if PUA_A_START <= cp <= PUA_A_LIMIT:
         return cp - PUA_A_START
     if PUA_B_START <= cp <= PUA_B_LIMIT:
@@ -51,116 +136,35 @@ def pua_to_offset(cp: int) -> int:
 
 
 def is_valid_pua_char(ch: str) -> bool:
-    """유효한 AiJungEum PUA-A 또는 PUA-B 문자인지 체크"""
     cp = ord(ch)
     return (PUA_A_START <= cp <= PUA_A_LIMIT) or (PUA_B_START <= cp <= PUA_B_LIMIT)
 
 
-def bytes_to_pua(linear_bytes: bytes, add_space: bool = False) -> str:
-    """
-    [바이너리 -> 표현] 2바이트 단위의 선형 주소(0x0000~0xFFFF)를 PUA 문자열로 변환.
-    홀수 바이트가 들어올 경우 끝에 0x00 1바이트를 패딩하여 2바이트 정렬을 유지.
-    """
-    if len(linear_bytes) % 2 != 0:
-        linear_bytes += b'\x00'
-
-    encoded_chars = [
-        offset_to_pua((linear_bytes[i] << 8) | linear_bytes[i + 1])
-        for i in range(0, len(linear_bytes), 2)
+def bytes_to_pua_display(linear_bytes: bytes, add_space: bool = False) -> str:
+    """[출력 전용] 선형 2바이트 열을 화면 표시용 PUA 문자열로 렌더링"""
+    aligned, _ = _align_even_bytes(linear_bytes)
+    chars = [
+        offset_to_pua((aligned[i] << 8) | aligned[i + 1])
+        for i in range(0, len(aligned), 2)
     ]
-    return (" " if add_space else "").join(encoded_chars)
+    return (" " if add_space else "").join(chars)
 
 
-def pua_to_bytes(pua_text: str) -> bytes:
-    """
-    [표현 -> 바이너리] PUA-A/B 문자열을 원래의 선형 2바이트(0x0000~0xFFFF)로 반환.
-    """
+def pua_display_to_bytes(pua_text: str) -> bytes:
+    """[입력 전용] 화면의 PUA 문자열을 선형 2바이트 바이너리로 파싱"""
     clean_text = "".join(pua_text.split())
-    raw_bytes = bytearray()
-
+    raw = bytearray()
     for ch in clean_text:
         offset = pua_to_offset(ord(ch))
         if offset >= 0:
-            raw_bytes.append((offset >> 8) & 0xFF)
-            raw_bytes.append(offset & 0xFF)
-
-    return bytes(raw_bytes)
+            raw.append((offset >> 8) & 0xFF)
+            raw.append(offset & 0xFF)
+    return bytes(raw)
 
 
 # =====================================================================
-# [Layer 2] 텍스트/헥사/압축 인코딩 및 디코딩
+# CLI 실행부
 # =====================================================================
-
-def encode_aijungeum(text: str, add_space: bool = False, hex_mode: bool = False) -> str:
-    """입력 스트링을 선형 2바이트(자음 4개)로 조합한 뒤 PUA 문자로 인코딩"""
-    if hex_mode:
-        clean_hex = "".join(text.split())
-        if not clean_hex:
-            return ""
-
-        remainder = len(clean_hex) % 4
-        pad_count = (4 - remainder) % 4
-        padded_hex = clean_hex + ('0' * pad_count)
-
-        # 16진수 문자열을 순수 선형 바이트로 변환 + 마지막 2바이트에 패딩 카운트 기록
-        linear_bytes = bytearray.fromhex(padded_hex)
-        linear_bytes.extend(pad_count.to_bytes(2, 'big'))
-        return bytes_to_pua(bytes(linear_bytes), add_space=add_space)
-
-    # 일반 UTF-8 텍스트 -> 선형 바이트 -> PUA 변환
-    return bytes_to_pua(text.encode('utf-8'), add_space=add_space)
-
-
-def decode_aijungeum(encoded_text: str, hex_mode: bool = False) -> str:
-    """PUA 문자열을 선형 2바이트로 복원한 뒤 원래의 헥사 또는 UTF-8 텍스트로 디코딩"""
-    linear_bytes = pua_to_bytes(encoded_text)
-    if not linear_bytes:
-        return ""
-
-    if hex_mode:
-        if len(linear_bytes) < 4:
-            return ""
-        # 마지막 2바이트(0x0000~0x0003)에서 패딩 카운트 추출
-        pad_count = int.from_bytes(linear_bytes[-2:], 'big')
-        full_hex = linear_bytes[:-2].hex().upper()
-        return full_hex[:-pad_count] if 0 < pad_count <= 3 else full_hex
-
-    # 홀수 바이트 패딩으로 추가된 마지막 1바이트(0x00) 제거 후 UTF-8 디코딩
-    if linear_bytes.endswith(b'\x00'):
-        linear_bytes = linear_bytes[:-1]
-
-    return linear_bytes.decode('utf-8', errors='replace')
-
-
-def pack_aijungeum(text: str, add_space: bool = False) -> str:
-    """UTF-8 인코딩 -> zlib 압축 -> 선형 2바이트 패킹 -> PUA 변환"""
-    compressed = zlib.compress(text.encode('utf-8'), level=9)
-    pad_byte_count = len(compressed) % 2
-
-    linear_bytes = bytearray(compressed)
-    if pad_byte_count == 1:
-        linear_bytes.append(0x00)
-
-    # 마지막 2바이트에 홀수 패딩 여부(0 또는 1) 기록
-    linear_bytes.extend(pad_byte_count.to_bytes(2, 'big'))
-    return bytes_to_pua(bytes(linear_bytes), add_space=add_space)
-
-
-def unpack_aijungeum(encoded_text: str) -> str:
-    """PUA -> 선형 2바이트 복원 -> 패딩 제거 -> zlib 압축 해제"""
-    linear_bytes = pua_to_bytes(encoded_text)
-    if len(linear_bytes) < 4:
-        return ""
-
-    pad_byte_count = int.from_bytes(linear_bytes[-2:], 'big')
-    compressed = linear_bytes[:-2]
-
-    if pad_byte_count == 1:
-        compressed = compressed[:-1]
-
-    decompressed = zlib.decompress(compressed)
-    return decompressed.decode('utf-8', errors='replace')
-
 
 if __name__ == "__main__":
     add_space = True
@@ -176,7 +180,7 @@ if __name__ == "__main__":
 
     if "\\u" in user_input.lower():
         try:
-            user_input = user_input.encode('utf-8').decode('unicode_escape')
+            user_input = user_input.encode("utf-8").decode("unicode_escape")
         except Exception:
             pass
 
@@ -186,40 +190,51 @@ if __name__ == "__main__":
     is_pua = bool(clean_check) and all(is_valid_pua_char(c) for c in clean_check)
 
     if mode == "raw":
-        # PUA-A / PUA-B 문자를 선형 2바이트(0x0000~0xFFFF)로 직접 반환 확인
-        raw_2bytes = pua_to_bytes(user_input)
-        print(f"선형 2바이트 반환 (bytes): {raw_2bytes}")
-        print(f"선형 16진수 덤프 (hex)  : {raw_2bytes.hex(' ').upper()}")
+        raw_bytes = pua_display_to_bytes(user_input)
+        print(f"선형 바이너리 (bytes): {raw_bytes}")
+        print(f"선형 16진수 덤프     : {raw_bytes.hex(' ').upper()}")
+        if raw_bytes.startswith(MAGIC_PREFIX) and len(raw_bytes) >= 4:
+            print(f"매직 헤더 감지       : AJE (Flag=0x{raw_bytes[3]:02X})")
+
     elif mode == "pack":
-        print("-> zlib 압축 후 AiJungEum 패킹 수행")
-        packed = pack_aijungeum(user_input, add_space=add_space)
-        codes_text = " ".join(f"U+{ord(c):05X}" for c in packed.replace(" ", ""))
-        print(f"패킹 결과 : {packed}")
-        print(f"코드포인트: {codes_text}")
-        print(f"언패킹 검증: {unpack_aijungeum(packed)}")
-    elif mode == "unpack":
-        print("-> AiJungEum 언패킹 및 zlib 압축 해제 수행")
-        print(f"복원된 스트링: {unpack_aijungeum(user_input)}")
-    elif mode == "dehex":
-        print(f"[hex_mode=True] 디코딩 복원: {decode_aijungeum(user_input, hex_mode=True)}")
-    elif mode == "decode" or (mode == "auto" and is_pua):
-        print(f"[hex_mode=False] 디코딩 복원: {decode_aijungeum(user_input, hex_mode=False)}")
+        # 1. 내부 처리는 순수 선형 바이너리로 패킹 (용량 최소화)
+        linear_bin = encode_linear_text(user_input, compress=True)
+        # 2. 화면에 보여줄 때만 PUA로 변환
+        pua_view = bytes_to_pua_display(linear_bin, add_space=add_space)
+        print(f"[선형 바이너리] 크기: {len(linear_bin)} bytes (헤더 4B 포함)")
+        print(f"[선형 바이너리] HEX : {linear_bin.hex(' ').upper()}")
+        print(f"[PUA 출력]          : {pua_view}")
+        print(f"[언패킹 검증]       : {decode_linear_text(pua_display_to_bytes(pua_view))}")
+
+    elif mode == "unpack" or (mode == "auto" and is_pua):
+        linear_bin = pua_display_to_bytes(user_input)
+        try:
+            restored = decode_linear_text(linear_bin)
+            print(f"복원 결과: {restored}")
+        except ValueError as e:
+            print(f"에러: {e}")
+
     elif mode == "hex":
         try:
-            enc_text = encode_aijungeum(user_input, add_space=add_space, hex_mode=True)
-        except ValueError:
-            print("에러: hex 모드에서는 16진수(0~9, A~F)만 입력할 수 있습니다.")
+            linear_bin = encode_linear_hex(user_input)
+        except ValueError as e:
+            print(f"에러: {e}")
             sys.exit(1)
-        codes_text = " ".join(f"U+{ord(c):05X}" for c in enc_text.replace(" ", ""))
-        print(f"[hex_mode=True] 변환 결과 : {enc_text}")
-        print(f"[hex_mode=True] 코드포인트: {codes_text}")
-        print(f"[hex_mode=True] 선형 바이트: {pua_to_bytes(enc_text).hex(' ').upper()}")
-        print(f"[hex_mode=True] 디코딩 복원: {decode_aijungeum(enc_text, hex_mode=True)}")
-    else:
-        enc_text = encode_aijungeum(user_input, add_space=add_space, hex_mode=False)
-        codes_text = " ".join(f"U+{ord(c):05X}" for c in enc_text.replace(" ", ""))
-        print(f"[hex_mode=False] 변환 결과 : {enc_text}")
-        print(f"[hex_mode=False] 코드포인트: {codes_text}")
-        print(f"[hex_mode=False] 선형 바이트: {pua_to_bytes(enc_text).hex(' ').upper()}")
-        print(f"[hex_mode=False] 디코딩 복원: {decode_aijungeum(enc_text, hex_mode=False)}")
+        pua_view = bytes_to_pua_display(linear_bin, add_space=add_space)
+        print(f"[선형 바이너리] 크기: {len(linear_bin)} bytes")
+        print(f"[선형 바이너리] HEX : {linear_bin.hex(' ').upper()}")
+        print(f"[PUA 출력]          : {pua_view}")
+        print(f"[디코딩 검증]       : {decode_linear_text(linear_bin)}")
 
+    elif mode == "dehex":
+        linear_bin = pua_display_to_bytes(user_input)
+        print(f"복원 HEX: {decode_linear_text(linear_bin)}")
+
+    else:
+        # 일반 encode 모드
+        linear_bin = encode_linear_text(user_input, compress=False)
+        pua_view = bytes_to_pua_display(linear_bin, add_space=add_space)
+        print(f"[선형 바이너리] 크기: {len(linear_bin)} bytes (PUA UTF-8 대비 {len(linear_bin)}B vs {len(pua_view.replace(' ', '').encode('utf-8'))}B)")
+        print(f"[선형 바이너리] HEX : {linear_bin.hex(' ').upper()}")
+        print(f"[PUA 출력]          : {pua_view}")
+        print(f"[디코딩 검증]       : {decode_linear_text(linear_bin)}")

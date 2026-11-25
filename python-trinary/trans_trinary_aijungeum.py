@@ -1,8 +1,11 @@
 # python3 trans_trinary_aijungeum.py "[[0,0,0], [1,0,0], [0,1,2]]"
 # python3 trans_trinary_aijungeum.py 0t000120210
+# python3 trans_trinary_aijungeum.py 0ts00p     # 0ts 27진수 0~9, a(A)~q(Q)
 # python3 trans_trinary_aijungeum.py hello 
+# python3 trans_trinary_aijungeum.py ts 0t000120210
 # python3 trans_trinary_aijungeum.py base3 0t000120210
-# python3 trans_trinary_aijungeum.py base27 hello
+# python3 trans_trinary_aijungeum.py base3 0ts00p
+# python3 trans_trinary_aijungeum.py base27 0ts00p
 
 import ast
 import sys
@@ -11,10 +14,14 @@ import zlib
 from typing import List, Union, Tuple
 
 # ==========================================
-# PUA 매핑 테이블
+# PUA 매핑 테이블 및 Base-27 문자셋 정의
 # ==========================================
 BASE3_PUA_START = 0xE220   # 0xE220 ~ 0xE23A (3진수 3자리 조합 27개: 000 ~ 222)
 BASE27_PUA_START = 0xE200  # 0xE200 ~ 0xE21A (27진수 단일 문자 27개: 0 ~ 26)
+
+# Base-27 표준 문자셋 (0~9: 0~9, a~q: 10~26)
+BASE27_CHARS = "0123456789abcdefghijklmnopq"
+BASE27_MAP = {ch: idx for idx, ch in enumerate(BASE27_CHARS)}
 
 # 데이터 타입 
 TYPE_UTF8 = 0
@@ -22,6 +29,43 @@ TYPE_BIN = 2
 TYPE_BASE3 = 3
 TYPE_BASE27 = 27
 
+
+# ==========================================
+# Base-27 (0ts) <-> Trits 변환
+# ==========================================
+def base27_str_to_trits(b27_str: str) -> List[int]:
+    """
+    27진수 문자열(0~9, a~q, 대소문자 무관)을 3진수 trits 리스트로 변환
+    (27진수 1자리 -> 3진수 3자리)
+    """
+    if not b27_str:
+        raise ValueError("0ts 뒤에는 최소 1자리 이상의 27진수 문자가 필요합니다.")
+    
+    trits = []
+    for ch in b27_str.lower():
+        if ch not in BASE27_MAP:
+            raise ValueError(f"유효하지 않은 27진수 문자입니다: '{ch}' (허용: 0~9, a~q)")
+        val27 = BASE27_MAP[ch]
+        trits.extend([val27 // 9, (val27 % 9) // 3, val27 % 3])
+    return trits
+
+
+def trits_to_base27_str(trits: List[int]) -> Tuple[str, List[int]]:
+    """
+    3진수 trits 리스트를 27진수 문자열(0ts 포맷)과 각 자리의 10진수 인덱스(0~26) 리스트로 변환
+    """
+    if not trits:
+        return "", []
+    rem = len(trits) % 3
+    padded = trits + ([0] * (3 - rem) if rem != 0 else [])
+    
+    chars = []
+    indices = []
+    for i in range(0, len(padded), 3):
+        val27 = padded[i] * 9 + padded[i+1] * 3 + padded[i+2]
+        chars.append(BASE27_CHARS[val27])
+        indices.append(val27)
+    return "".join(chars), indices
 
 
 # ==========================================
@@ -76,8 +120,6 @@ def pua_to_trits(pua_str: str) -> Tuple[int, List[int]]:
 
         trits.extend([idx // 9, (idx % 9) // 3, idx % 3])
     return detected_type, trits
-
- 
 
 
 # ==========================================
@@ -199,8 +241,6 @@ def unpack_container(container: bytes) -> Tuple[int, List[int]]:
     trits = unpack_trits_5(packed_body, pad_count)
     return data_type, trits
 
- 
-
 # ==========================================
 # 통합 입력 파서 (3진수 에뮬레이션 데이터 & 테스트용 UTF-8/Hex/Bin)
 # ==========================================
@@ -237,7 +277,14 @@ def parse_input(user_input: Union[str, List[List[int]], List[int]]) -> Tuple[int
             packed_bytes, _ = pack_trits_5(trits)
             return dtype, packed_bytes, trits
 
-        # 3) 0t 접두사 (3진수 직접 입력)
+        # 3) 0ts 접두사 (27진수 직접 입력: 0~9, a~q) -> 0t 보다 먼저 검사
+        if s.startswith("0ts"):
+            b27_str = s[3:]
+            trits = base27_str_to_trits(b27_str)
+            packed_bytes, _ = pack_trits_5(trits)
+            return TYPE_BASE27, packed_bytes, trits
+
+        # 4) 0t 접두사 (3진수 직접 입력)
         if s.startswith("0t"):
             t_str = s[2:]
             if not t_str or any(c not in "012" for c in t_str):
@@ -246,7 +293,7 @@ def parse_input(user_input: Union[str, List[List[int]], List[int]]) -> Tuple[int
             packed_bytes, _ = pack_trits_5(trits)
             return TYPE_BASE3, packed_bytes, trits
 
-        # 4) 0x 접두사
+        # 5) 0x 접두사
         if s.startswith("0x"):
             hex_str = s[2:]
             if len(hex_str) % 2 != 0:
@@ -256,7 +303,7 @@ def parse_input(user_input: Union[str, List[List[int]], List[int]]) -> Tuple[int
             packed_bytes, _ = pack_trits_5(trits)
             return TYPE_BIN, packed_bytes, trits
 
-        # 5) 0b 접두사
+        # 6) 0b 접두사
         if s.startswith("0b"):
             bin_str = s[2:]
             byte_len = (len(bin_str) + 7) // 8
@@ -265,7 +312,7 @@ def parse_input(user_input: Union[str, List[List[int]], List[int]]) -> Tuple[int
             packed_bytes, _ = pack_trits_5(trits)
             return TYPE_BIN, packed_bytes, trits
 
-        # 6) 일반 UTF-8 문자열 (테스트 편의용 -> 비트 스트림 재분할)
+        # 7) 일반 UTF-8 문자열 (테스트 편의용 -> 비트 스트림 재분할)
         raw_bytes = user_input.encode("utf-8")
         trits = bytes_to_trit_stream(raw_bytes)
         packed_bytes, _ = pack_trits_5(trits)
@@ -275,8 +322,20 @@ def parse_input(user_input: Union[str, List[List[int]], List[int]]) -> Tuple[int
 
 
 # ==========================================
-# 6. 출력 (print_utf8, print3, print27)
+# 출력 (print_ts, print_utf8, print3, print27)
 # ==========================================
+def print_ts(user_input: Union[str, List[List[int]], List[int]]) -> str:
+    """
+    27진수(0ts) 문자열과 함께 가독성을 위해 각 자리의 10진수 값(0~26)을 병기 출력
+    """
+    _, _, trits = parse_input(user_input)
+    b27_str, indices = trits_to_base27_str(trits)
+    
+    breakdown = " ".join(f"{ch}({idx})" for ch, idx in zip(b27_str, indices))
+    print(f"[0ts 표기]: 0ts{b27_str}  ->  [{breakdown}]")
+    return f"0ts{b27_str}"
+
+
 def print_utf8(data: Union[List[int], str]) -> str:
     """트릿 스트림(또는 PUA 문자열)을 원본 UTF-8 문자열로 복원 및 출력"""
     if isinstance(data, str):
@@ -297,13 +356,18 @@ def print_utf8(data: Union[List[int], str]) -> str:
 
 
 def print3(user_input: Union[str, List[List[int]], List[int]]) -> str:
-    """Base-3 PUA (0xE220 ~ 0xE23A) 및 인덱스(0~26) 리스트 출력"""
+    """Base-3 PUA (0xE220 ~ 0xE23A), 10진수 인덱스, 3진수 조합(000~222), 유니코드 출력"""
     _, _, trits = parse_input(user_input)
     pua3 = trits_to_pua_base3(trits)
     indices = [ord(c) - BASE3_PUA_START for c in pua3]
+    
+    # 각 인덱스(0~26)를 3자리 3진수 문자열('000' ~ '222')로 변환
+    trit_groups = ",".join(f"{idx // 9}{(idx % 9) // 3}{idx % 3}" for idx in indices)
     codes = " ".join(f"U+{ord(c):04X}" for c in pua3)
-    print(f"[Base3]  : {pua3}  {indices} ({codes})")
+    
+    print(f"[Base3]  : {pua3}  {indices} ({trit_groups}) ({codes})")
     return pua3
+
 
 
 def print27(user_input: Union[str, List[List[int]], List[int]]) -> str:
@@ -324,7 +388,8 @@ def main():
 
     if not args:
         print("사용법:")
-        print("  python3 trans_trinary_aijungeum.py <text | 0t... | 0x... | '[[0,1,2],...]' | PUA>")
+        print("  python3 trans_trinary_aijungeum.py <text | 0t... | 0ts... | 0x... | '[[0,1,2],...]' | PUA>")
+        print("  python3 trans_trinary_aijungeum.py ts <chars>")
         print("  python3 trans_trinary_aijungeum.py base3 <chars>")
         print("  python3 trans_trinary_aijungeum.py base27 <chars>")
         print("  python3 trans_trinary_aijungeum.py decode <PUA_chars>")
@@ -332,7 +397,11 @@ def main():
 
     cmd = args[0]
 
-    if cmd == "base3" and len(args) >= 2:
+    if cmd == "ts" and len(args) >= 2:
+        target = " ".join(args[1:])
+        print_ts(target)
+
+    elif cmd == "base3" and len(args) >= 2:
         target = " ".join(args[1:])
         print3(target)
 
@@ -350,9 +419,10 @@ def main():
 
         print(f"=== 입력: {target} ===")
         print(f"[0t 표기]: 0t{''.join(map(str, trits))} (총 {len(trits)} trits)")
+        print_ts(trits)
         print(f"[5-Trit] : 0x{packed_5trit.hex()} ({len(packed_5trit)} bytes, 1바이트당 5트릿 패킹)")
-        p3 = print3(target)
-        p27 = print27(target)
+        print3(trits)
+        print27(trits)
 
         # pack/unpack
         container = pack_container(trits, data_type=dtype)
@@ -368,4 +438,3 @@ def main():
 if __name__ == "__main__":
     main()
 
- 

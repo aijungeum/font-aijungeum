@@ -9,7 +9,7 @@
 
 
 ## Base3, Base27 
-1. font install : _output/ **-trinary 
+1. font install : _output/ **-ternary 
 2. code: python-ternary/ 
 
 

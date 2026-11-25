@@ -1,11 +1,11 @@
-# python3 trans_trinary_aijungeum.py "[[0,0,0], [1,0,0], [0,1,2]]"
-# python3 trans_trinary_aijungeum.py 0t000120210
-# python3 trans_trinary_aijungeum.py 0ts00p     # 0ts 27진수 0~9, a(A)~q(Q)
-# python3 trans_trinary_aijungeum.py hello 
-# python3 trans_trinary_aijungeum.py ts 0t000120210
-# python3 trans_trinary_aijungeum.py base3 0t000120210
-# python3 trans_trinary_aijungeum.py base3 0ts00p
-# python3 trans_trinary_aijungeum.py base27 0ts00p
+# python3 trans_ternary_aijungeum.py "[[0,0,0], [1,0,0], [0,1,2]]"
+# python3 trans_ternary_aijungeum.py 0t000120210
+# python3 trans_ternary_aijungeum.py 0ts00p     # 0ts 27진수 0~9, a(A)~q(Q)
+# python3 trans_ternary_aijungeum.py hello 
+# python3 trans_ternary_aijungeum.py ts 0t000120210
+# python3 trans_ternary_aijungeum.py base3 0t000120210
+# python3 trans_ternary_aijungeum.py base3 0ts00p
+# python3 trans_ternary_aijungeum.py base27 0ts00p
 
 import ast
 import sys
@@ -388,11 +388,11 @@ def main():
 
     if not args:
         print("사용법:")
-        print("  python3 trans_trinary_aijungeum.py <text | 0t... | 0ts... | 0x... | '[[0,1,2],...]' | PUA>")
-        print("  python3 trans_trinary_aijungeum.py ts <chars>")
-        print("  python3 trans_trinary_aijungeum.py base3 <chars>")
-        print("  python3 trans_trinary_aijungeum.py base27 <chars>")
-        print("  python3 trans_trinary_aijungeum.py decode <PUA_chars>")
+        print("  python3 trans_ternary_aijungeum.py <text | 0t... | 0ts... | 0x... | '[[0,1,2],...]' | PUA>")
+        print("  python3 trans_ternary_aijungeum.py ts <chars>")
+        print("  python3 trans_ternary_aijungeum.py base3 <chars>")
+        print("  python3 trans_ternary_aijungeum.py base27 <chars>")
+        print("  python3 trans_ternary_aijungeum.py decode <PUA_chars>")
         return
 
     cmd = args[0]

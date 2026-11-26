@@ -213,8 +213,8 @@ def test_inference(model_path: str = "aijungeum_best_model.pth", pt_path: str = 
     model.eval()
 
     dataset = AiJungEumDataset(pt_path)
-    # 점프 경계값인 0xFF00 부근 샘플 테스트
-    sample_idx = 0xFF05 * 2 if len(dataset) > 0xFF05 * 2 else 0
+        # 점프 경계값인 0x8000 부근 샘플 테스트
+    sample_idx = 0x8005 * 2 if len(dataset) > 0x8005 * 2 else 0 
     img, target = dataset[sample_idx]
 
     with torch.no_grad():

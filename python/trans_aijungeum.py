@@ -33,10 +33,10 @@ PAD_BIT_MASK  = 0x80  # 최상위 비트(MSB): 홀수 바이트 0x00 패딩 여�
 
 # 표현 유니코드 영역 정의 (Display Layer 전용)
 PUA_A_START = 0xF0000
-PUA_A_LIMIT = 0xFFEFF
+PUA_A_LIMIT = 0xF7FFF
 PUA_B_START = 0x100000
-PUA_B_LIMIT = 0x1000FF
-JUMP_THRESHOLD = 0xFF00
+PUA_B_LIMIT = 0x107FFF
+JUMP_THRESHOLD = 0x8000
 
 
 # =====================================================================
@@ -123,7 +123,7 @@ def offset_to_pua(offset: int) -> str:
     """16비트 선형 주소(0x0000~0xFFFF) -> PUA-A/B 문자"""
     if offset < JUMP_THRESHOLD:
         return chr(PUA_A_START + offset)
-    return chr(PUA_B_START + (offset & 0xFF))
+    return chr(PUA_B_START + (offset & 0x7FFF))
 
 
 def pua_to_offset(cp: int) -> int:
@@ -131,7 +131,7 @@ def pua_to_offset(cp: int) -> int:
     if PUA_A_START <= cp <= PUA_A_LIMIT:
         return cp - PUA_A_START
     if PUA_B_START <= cp <= PUA_B_LIMIT:
-        return JUMP_THRESHOLD | (cp & 0xFF)
+        return JUMP_THRESHOLD | (cp & 0x7FFF)
     return -1
 
 

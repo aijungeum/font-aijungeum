@@ -18,18 +18,18 @@ ENABLE_VERIFY = True               # True: 샘플 추출 / False: skip
 VERIFY_OUTPUT_DIR = "verify_samples"
 
 # AiJungEum 유니코드 영역 (중간 점프)
-# PUA-A: U+F0000 ~ U+FFEFF (선형 주소 0x0000 ~ 0xFEFF)
-# PUA-B: U+100000 ~ U+1000FF (선형 주소 0xFF00 ~ 0xFFFF)
+# PUA-A: U+F0000 ~ U+F7FFF (선형 주소 0x0000 ~ 0x7FFF)
+# PUA-B: U+100000 ~ U+107FFF (선형 주소 0x8000 ~ 0xFFFF)
 PUA_A_START = 0xF0000
 PUA_B_START = 0x100000
-JUMP_THRESHOLD = 0xFF00
+JUMP_THRESHOLD = 0x8000
 
 
 def offset_to_pua_char(offset: int) -> str:
     """16비트 선형 주소(0x0000~0xFFFF)를 점프 구간이 반영된 PUA-A/B 문자로 변환"""
     if offset < JUMP_THRESHOLD:
         return chr(PUA_A_START + offset)
-    return chr(PUA_B_START + (offset & 0xFF))
+    return chr(PUA_B_START + (offset & 0x7FFF))
 
 
 def load_ttc_fonts(font_path: str, size: int) -> list[ImageFont.FreeTypeFont]:
@@ -206,8 +206,8 @@ def export_verification_samples(
     total_len = len(dataset)
     samples_per_class = total_len // 65536
 
-    # 필수 검증 경계값 (시작점, 점프 직전 0xFEFF, 점프 직후 0xFF00, 끝점 0xFFFF)
-    key_offsets = [0x0000, 0x0001, 0x1234, 0xFEFF, 0xFF00, 0xFF01, 0xFFFF]
+        # 필수 검증 경계값 (시작점, 점프 직전 0x7FFF, 점프 직후 0x8000, 끝점 0xFFFF)
+    key_offsets = [0x0000, 0x0001, 0x1234, 0x7FFF, 0x8000, 0x8001, 0xFFFF]
     target_indices = [off * samples_per_class for off in key_offsets if off * samples_per_class < total_len]
 
     # 무작위 샘플 인덱스 추가

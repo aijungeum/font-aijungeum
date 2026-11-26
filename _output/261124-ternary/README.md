@@ -3,10 +3,9 @@
 font install 
 
 font cache reload: 
-    sudo killall -9 fontd   
-    or reboot 
+sudo killall -9 fontd   
+or reboot 
 
 vscode add FontFamily : aijungeum 
+
 vscode restart 
-
-
